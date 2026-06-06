@@ -2,26 +2,54 @@
 
 A bridge between an orchestrating/local agent and a remote LLM running on a node in your topology.
 
-The foreign agent — qwen3-coder on pond, or any LLM node you point it at — has no direct access to your filesystem or shell. This skill defines the toolset it *can* request (read files, run bash commands, grep, write files, etc.) and executes those tool calls locally on its behalf. Claude acts as the intermediary: it sends your message to the remote model, receives tool call requests back, runs them against the local working directory, and returns the results — repeating until the foreign agent produces a final answer.
-
-The result is a peer agent visible inside your Claude Code session, with all its reasoning and tool use shown inline.
-
 ## Dependency on load-topology-skill
 
-The topology file (managed by [load-topology-skill](https://github.com/nicholasf/load-topology-skill)) is how you know which nodes are available and what models they are running. Before invoking a foreign agent, check the topology to confirm the target node is online and its inference server is active.
+The topology file (managed by [load-topology-skill](https://github.com/nicholasf/load-topology-skill)) is the source of truth for which LLM nodes are available, what models they are running, and how to reach them. Before invoking a foreign agent, read the topology to confirm the target node is online and its inference server is active.
 
-The agent connects to an OpenAI-compatible endpoint. Set these environment variables to target a specific node:
+Set these environment variables to target a node:
 
 ```bash
-export FOREIGN_AGENT_URL=http://pond:9337/v1     # default
-export FOREIGN_AGENT_MODEL=qwen3-coder-30b.gguf  # default
+export FOREIGN_AGENT_URL=http://<node-hostname>:9337/v1
+export FOREIGN_AGENT_MODEL=<model-name>
 ```
 
-If your topology has a different LLM node — say `gollum` running Ollama on port 11434 — just point `FOREIGN_AGENT_URL` there.
+## Modes
 
-## Toolset
+### Bridge mode
 
-The foreign agent can request any of these tools during its reasoning loop. Claude executes each one locally:
+The remote agent has no copy of the codebase. The orchestrating agent proxies tool calls on its behalf — the remote agent requests `read_file`, `bash`, `grep`, etc., and the orchestrating agent executes them locally and returns results. Useful for focused inspection tasks where a full clone is unnecessary.
+
+```bash
+python3 agent.py --cwd /path/to/project "Summarise how authentication works"
+```
+
+### Peer mode
+
+The remote agent clones the repository to its own machine and works against it directly. Tool calls execute on the remote node via SSH. The orchestrating agent's working copy is untouched. Results are returned via `git diff`, a pushed branch, or a pull request — the remote agent decides based on the task.
+
+```bash
+python3 agent.py \
+  --node <hostname> \
+  --repo https://github.com/user/repo \
+  "Refactor the auth module and open a PR"
+```
+
+The node hostname comes from the topology. `--remote-path` overrides the default clone location (`/tmp/ask-foreign-agent/<repo-name>`).
+
+In peer mode, only `bash` is exposed as a tool. The remote agent has full shell access on its own machine and uses bash for everything: reading files, running tests, committing, pushing, opening PRs.
+
+## Security
+
+**Peer mode grants the remote agent shell access to the target node.** Consider the following before use:
+
+- The LLM is not sandboxed. A sufficiently adversarial prompt — including content read from source files — could cause the remote agent to request destructive bash commands that execute on the remote node.
+- The SSH key used (`$SSH_USER`) has full shell access. Use a dedicated agent user with restricted permissions where possible, and prefer nodes that are not shared with other workloads.
+- Treat the remote node as an execution environment for agent work, not a production machine.
+- Review results (diff or PR) before merging. Never auto-merge output from a remote agent.
+
+Bridge mode does not have this exposure — tool calls execute locally under the orchestrating agent's control.
+
+## Toolset (bridge mode)
 
 | Tool | What it does |
 |---|---|
@@ -37,25 +65,18 @@ The foreign agent can request any of these tools during its reasoning loop. Clau
 ## Setup
 
 ```bash
-# Install dependencies into the local venv
 uv sync
-
-# Or with pip
-pip install langchain-core langchain-openai
+# or: pip install langchain-core langchain-openai
 ```
-
-The skill is registered via [manage-skills-skill](https://github.com/nicholasf/manage-skills-skill).
 
 ## Usage
 
-Ask pond a question directly:
+Bridge mode — ask a question about the local codebase:
 ```
-ask qwen what the tradeoffs are between X and Y
-```
-
-Delegate a research task:
-```
-let qwen look at the auth module and summarise how sessions are managed
+ask the foreign agent what the tradeoffs are between X and Y
 ```
 
-The foreign agent's output appears inline prefixed with `[pond-qwen]`.
+Peer mode — delegate a task to a remote node:
+```
+ask the foreign agent on gollum to clone the repo and refactor the auth module
+```

@@ -1,19 +1,31 @@
 """Shared mutable state and subprocess runner for all tools."""
 
+import os
 import subprocess
 
 working_directory: str = "."
+ssh_node: str = ""
 
 
 def run_command(command: str, timeout: int = 30) -> str:
+    if ssh_node:
+        ssh_user = os.environ.get('SSH_USER', '')
+        target = f'{ssh_user}@{ssh_node}' if ssh_user else ssh_node
+        # Command runs on the remote node via SSH. The remote shell interprets the command.
+        cmd = ['ssh', target, f'cd {working_directory} && {command}']
+        cwd = None
+    else:
+        cmd = command
+        cwd = working_directory
+
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            cmd,
+            shell=isinstance(cmd, str),
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=working_directory,
+            cwd=cwd,
         )
         output = result.stdout
         if result.returncode != 0 and result.stderr:
