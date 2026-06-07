@@ -1,19 +1,26 @@
 # Ask Foreign Agent
 
-Invoke an LLM node from the topology as a peer agent. All output is prefixed with `[node-name]`.
+Invoke a remote LLM node as an interactive agent. All output is prefixed with `[node-name]`.
+
+## Agent naming convention
+
+Refer to agents as `<machine>-<llm>-agent`, e.g. `dtv-claude-agent`, `pond-qwen-agent`. This makes it clear which machine and which model is acting at each step.
 
 ## Before invoking
 
-Read the topology (load-topology-skill) to:
-- Find the node hostname
-- Confirm the node is online (`ssh: yes`)
-- Verify its inference server is active (`curl -s http://<hostname>:9337/v1/models`)
+Read the topology (load-topology-skill) to find the node hostname and verify its inference server is active:
+
+```bash
+curl -s http://<hostname>:9337/v1/models
+```
 
 Set `$FOREIGN_AGENT_URL` and `$FOREIGN_AGENT_MODEL` to target the node.
 
-## Bridge mode
+---
 
-The remote agent uses proxied tools to access the local filesystem. Tool calls execute on the orchestrating agent's machine. Use for inspection, question, or execution tasks where the remote agent works against the local codebase.
+## Bridge mode — local (default)
+
+**dtv-claude-agent** drives **pond-qwen-agent** via HTTP. Tool calls execute on the orchestrating machine (dtv). Use when working against the local codebase.
 
 ```bash
 "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
@@ -22,27 +29,7 @@ The remote agent uses proxied tools to access the local filesystem. Tool calls e
   "<message>"
 ```
 
-## Peer mode
-
-The remote agent clones the repository to its own machine and works against it directly. Tool calls execute on the remote node via SSH. The orchestrating agent's working copy is untouched. Results are returned via `git diff`, a pushed branch, or a pull request.
-
-```bash
-"${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
-  "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/agent.py" \
-  --node <hostname> \
-  --repo <git-url> \
-  "<message>"
-```
-
-`$AGENT_SSH_USER` must be set for SSH connections. `--remote-path` overrides the default clone location (`/tmp/ask-foreign-agent/<repo-name>`).
-
-## Output format
-
-- `[node-name] ...` — text response
-- `[node-name:tool:tool_name] ...` — tool call
-- `[node-name:result] ...` — tool result (truncated if long)
-
-## Bridge mode toolset
+### Toolset
 
 | Tool | Description |
 |---|---|
@@ -55,7 +42,40 @@ The remote agent clones the repository to its own machine and works against it d
 | `list_directory` | List directory tree |
 | `git_diff` | Show unstaged and staged changes |
 
-In peer mode only `bash` is exposed — the remote agent has full shell access on its own machine.
+---
+
+## Bridge mode — SSH
+
+**dtv-claude-agent** drives **pond-qwen-agent** via HTTP. Tool calls execute on the remote node via SSH. Use when the remote node has the repo and toolchain but no agent runtime (Hermes). `$AGENT_SSH_USER` must be set.
+
+```bash
+"${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
+  "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/agent.py" \
+  --cwd <local working directory> \
+  --ssh-node <hostname> \
+  --ssh-cwd <remote working directory> \
+  "<message>"
+```
+
+In SSH mode only `bash` is exposed — commands execute on the remote node via SSH.
+
+---
+
+## Peer mode — agent to agent (requires Hermes on remote node)
+
+**dtv-claude-agent** sends a task to a remote agent runtime (e.g. Hermes running **pond-qwen-agent**). The remote agent executes autonomously using its own local tools and returns a result. No SSH proxying, no middleware loop from dtv.
+
+**Prerequisite:** Hermes must be installed and running on the remote node, configured to use the node's local LLM endpoint.
+
+Implementation pending — Hermes setup on pond in progress.
+
+---
+
+## Output format
+
+- `[node-name] ...` — text response
+- `[node-name:tool:tool_name] ...` — tool call
+- `[node-name:result] ...` — tool result (truncated if long)
 
 ## Triggers
 

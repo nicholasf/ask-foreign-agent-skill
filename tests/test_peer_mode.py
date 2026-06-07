@@ -1,4 +1,3 @@
-import subprocess
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -69,27 +68,3 @@ def test_run_command_ssh_mode_includes_stderr_on_failure(monkeypatch):
     assert 'STDERR' in result
     assert 'command not found' in result
 
-
-def test_clone_or_update_constructs_ssh_command(monkeypatch):
-    monkeypatch.setenv('AGENT_SSH_USER', 'agent')
-    from agent import clone_or_update
-
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = MagicMock(returncode=0, stdout='', stderr='')
-        clone_or_update('gollum', 'https://github.com/user/repo', '/tmp/repo')
-
-    call_args = mock_run.call_args[0][0]
-    assert call_args[0] == 'ssh'
-    assert call_args[1] == 'agent@gollum'
-    assert 'git clone' in call_args[2]
-    assert '/tmp/repo' in call_args[2]
-
-
-def test_clone_or_update_exits_on_failure(monkeypatch):
-    monkeypatch.setenv('AGENT_SSH_USER', 'agent')
-    from agent import clone_or_update
-
-    with patch('subprocess.run') as mock_run:
-        mock_run.return_value = MagicMock(returncode=1, stdout='', stderr='permission denied')
-        with pytest.raises(SystemExit):
-            clone_or_update('gollum', 'https://github.com/user/repo', '/tmp/repo')

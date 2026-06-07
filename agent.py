@@ -2,28 +2,34 @@
 """
 ask-foreign-agent: run a remote LLM node as an interactive agent.
 
-Bridge mode (default):
-  The remote agent uses proxied tools to access the local filesystem.
-  Tool calls execute on the orchestrating agent's machine.
+Bridge mode — local (default):
+  Tool calls execute on the orchestrating machine (dtv-claude-agent's machine).
 
   python3 agent.py --cwd /path/to/project "Your message"
 
-Peer mode (--node):
-  The remote agent clones the repo to its own machine and works against it directly.
-  Tool calls execute on the remote node via SSH. The local working copy is untouched.
+Bridge mode — SSH:
+  Tool calls execute on a remote node via SSH. The remote node needs the repo
+  and toolchain but does not need an agent runtime.
 
-  python3 agent.py --node <hostname> --repo <url> "Your message"
+  python3 agent.py --cwd /path/to/project --ssh-node <hostname> --ssh-cwd <remote-path> "Your message"
+
+Peer mode (agent-to-agent):
+  The remote node runs Hermes as an agent runtime. The orchestrating agent
+  sends a task to the Hermes gateway and receives an autonomous result.
+  Requires Hermes configured with API_SERVER_ENABLED=true on the remote node.
+  Gateway URL and key are read from topology.md and $SKILLS_HOME/.env.
+
+  python3 agent.py --peer-node <hostname> "Your task"
 
 Environment:
   FOREIGN_AGENT_URL    OpenAI-compatible base URL of the remote model
   FOREIGN_AGENT_MODEL  Model name to request
-  AGENT_SSH_USER       Username for SSH connections in peer mode (see load-topology-skill)
+  AGENT_SSH_USER       Username for SSH connections in bridge (SSH) mode
 """
 
 import argparse
 import os
 import re
-import subprocess
 import sys
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -36,6 +42,40 @@ from tools.bash import bash
 AGENT_URL = os.environ.get('FOREIGN_AGENT_URL', 'http://localhost:9337/v1')
 AGENT_MODEL = os.environ.get('FOREIGN_AGENT_MODEL', 'qwen3-coder-30b.gguf')
 MAX_ITERATIONS = 400
+
+
+def _load_skills_env() -> dict[str, str]:
+    skills_home = os.environ.get('SKILLS_HOME', os.path.expanduser('~/.agents/skills'))
+    result: dict[str, str] = {}
+    try:
+        with open(os.path.join(skills_home, '.env')) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, _, v = line.partition('=')
+                    result[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def _topology_node(hostname: str) -> dict[str, str]:
+    skills_home = os.environ.get('SKILLS_HOME', os.path.expanduser('~/.agents/skills'))
+    topology_path = os.environ.get('TOPOLOGY_PATH', os.path.join(skills_home, 'topology.md'))
+    try:
+        with open(topology_path) as f:
+            rows = [l.strip() for l in f if l.strip().startswith('|')]
+    except FileNotFoundError:
+        return {}
+    if len(rows) < 3:
+        return {}
+    headers = [h.strip() for h in rows[0].strip('|').split('|')]
+    for row in rows[2:]:  # skip separator line
+        values = [v.strip() for v in row.strip('|').split('|')]
+        node = dict(zip(headers, values))
+        if node.get('hostname') == hostname:
+            return node
+    return {}
 
 _FUNC_RE = re.compile(r'(?:<tool_call>\s*)?<function=(\w+)>(.*?)</function>\s*(?:</tool_call>)?', re.DOTALL)
 _PARAM_RE = re.compile(r'<parameter=(\w+)>\s*(.*?)\s*</parameter>', re.DOTALL)
@@ -73,21 +113,6 @@ def print_prefixed(text: str, prefix: str, suffix: str = '') -> None:
     for line in str(text).splitlines():
         print(f'{tag} {line}')
 
-
-def clone_or_update(node: str, repo: str, remote_path: str) -> None:
-    ssh_user = os.environ.get('AGENT_SSH_USER', '')
-    target = f'{ssh_user}@{node}' if ssh_user else node
-    command = (
-        f'[ -d {remote_path}/.git ] '
-        f'&& (cd {remote_path} && git pull) '
-        f'|| git clone {repo} {remote_path}'
-    )
-    print(f'[peer] preparing {node}:{remote_path}')
-    result = subprocess.run(['ssh', target, command], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f'[peer] failed: {result.stderr.strip()}', file=sys.stderr)
-        sys.exit(1)
-    print(f'[peer] ready')
 
 
 def run(message: str, prefix: str, tools: list, tool_map: dict) -> None:
@@ -129,26 +154,51 @@ def run(message: str, prefix: str, tools: list, tool_map: dict) -> None:
     print(flush=True)
 
 
+def run_peer(message: str, peer_node: str, prefix: str) -> str:
+    node = _topology_node(peer_node)
+    gateway = node.get('hermes_gateway', '').replace('—', '').strip()
+    key_env = node.get('hermes_key_env', '').replace('—', '').strip()
+
+    if not gateway:
+        print(f'[{prefix}] error: no hermes_gateway entry for {peer_node!r} in topology.md', file=sys.stderr)
+        sys.exit(1)
+
+    api_key = _load_skills_env().get(key_env, '') if key_env else ''
+
+    llm = ChatOpenAI(
+        base_url=f'{gateway}/v1',
+        api_key=api_key or 'none',
+        model='hermes-agent',
+        temperature=0,
+    )
+
+    print(f'\n[{prefix}] peer → {gateway}\n', flush=True)
+    response = llm.invoke([HumanMessage(content=message)])
+    output = str(response.content)
+
+    for line in output.splitlines():
+        print_prefixed(line, prefix)
+    print(flush=True)
+    return output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='ask-foreign-agent: remote LLM as agent')
     parser.add_argument('message', nargs='+', help='Message to send to the agent')
-    parser.add_argument('--cwd', default='.', help='Working directory for bridge mode tool execution')
+    parser.add_argument('--cwd', default='.', help='Local working directory for bridge mode tool execution')
     parser.add_argument('--thread', default='default', help='Thread ID for multi-turn conversation')
-    parser.add_argument('--node', default='', help='Topology node hostname for peer mode')
-    parser.add_argument('--repo', default='', help='Git repo URL to clone on the remote node (peer mode)')
-    parser.add_argument('--remote-path', default='', help='Path on remote node for the repo clone (peer mode)')
+    parser.add_argument('--ssh-node', default='', help='Remote node hostname for bridge (SSH) mode')
+    parser.add_argument('--ssh-cwd', default='', help='Working directory on the remote node for bridge (SSH) mode')
+    parser.add_argument('--peer-node', default='', help='Remote node hostname for peer mode (Hermes gateway)')
     args = parser.parse_args()
 
-    if args.node:
-        if not args.repo:
-            print('Error: --repo is required in peer mode (--node)', file=sys.stderr)
-            sys.exit(1)
-        repo_name = args.repo.rstrip('/').split('/')[-1].replace('.git', '')
-        remote_path = args.remote_path or f'/tmp/ask-foreign-agent/{repo_name}'
-        clone_or_update(args.node, args.repo, remote_path)
-        _context.ssh_node = args.node
-        _context.working_directory = remote_path
-        prefix = args.node
+    if args.peer_node:
+        run_peer(' '.join(args.message), args.peer_node, args.peer_node)
+        return
+    elif args.ssh_node:
+        _context.ssh_node = args.ssh_node
+        _context.working_directory = args.ssh_cwd or '.'
+        prefix = args.ssh_node
         active_tools = [bash]
         active_tool_map = {'bash': bash}
     else:
