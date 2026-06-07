@@ -8,61 +8,35 @@ Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skil
 
 ## Examples
 
-### Invoke as a skill (natural language)
+Agents are named `<machine>-<llm>-<runtime>` — e.g. `pond-qwen-goose`, `pond-qwen-hermes`, `gollum-mistral-hermes`. This comes from the topology (see [load-topology-skill](https://github.com/nicholasf/load-topology-skill)).
+
+### Delegate a task — type in your prompt
 
 ```
-ask the foreign agent on pond to summarise the auth module
+/ask-foreign-agent run --peer-node pond "Summarise how the auth module works"
 ```
 
 ```
-delegate to pond-qwen-agent: refactor the retry logic and open a PR
+/ask-foreign-agent run --peer-node gollum --runtime hermes "Run the test suite and report failures"
 ```
 
 ```
-let gollum handle this — run the test suite and report failures
+/ask-foreign-agent run --peer-node pond --runtime goose "Refactor the retry logic and open a PR"
 ```
 
-### Delegate a task (`run`)
-
-```bash
-"${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
-  "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/peer.py" \
-  run --peer-node pond "Summarise how the auth module works"
-```
-
-Output is prefixed with `[pond]`:
+Output arrives prefixed with the node name:
 
 ```
 [pond] The auth module uses JWT tokens issued at login...
 ```
 
-### Force a specific runtime
+### Sync repo and language state — type in your prompt
 
-```bash
-# Use Hermes (HTTP) explicitly
-peer.py run --peer-node pond --runtime hermes "What models are loaded?"
-
-# Use Goose ACP (WebSocket) explicitly
-peer.py run --peer-node pond --runtime goose "Run the test suite"
+```
+/ask-foreign-agent sync --peer-node pond --repo /home/user/code/my-project --lang python=3.11 --lang node=20
 ```
 
-Default is `auto`: prefers Goose if `goose_acp_url` is set, falls back to Hermes on connection failure.
-
-### Sync repo and language state (`sync`)
-
-Ask the remote agent whether it has the local HEAD commit and the expected language versions:
-
-```bash
-"${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
-  "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/peer.py" \
-  sync \
-  --peer-node pond \
-  --repo /home/user/code/my-project \
-  --lang python=3.11 \
-  --lang node=20
-```
-
-Returns structured JSON:
+Returns structured JSON showing whether the remote has the local HEAD commit and whether language versions match:
 
 ```json
 {
@@ -78,6 +52,10 @@ Returns structured JSON:
 ```
 
 If `sha1_present` is `false`, `git_commands` lists the steps to bring the remote up to date. The remote agent can act on the report autonomously.
+
+### Runtime selection
+
+The `--runtime` flag accepts `auto` (default), `goose`, or `hermes`. `auto` prefers Goose ACP if `goose_acp_url` is set in the topology, and falls back to Hermes on connection failure.
 
 ---
 
