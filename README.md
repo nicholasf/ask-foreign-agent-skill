@@ -8,29 +8,29 @@ Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skil
 
 ## Examples
 
-The node argument is an **agent handle** — `<machine>[-<llm>[-<runtime>]]`. Omit the parts you don't need; sensible defaults are applied from the topology.
+Each command takes an **agent handle** — a `<machine>[-<llm>[-<runtime>]]` address that identifies exactly which agent to talk to. Start with just the machine name and add specificity as needed; unspecified parts are filled in from the topology.
 
 ### Delegate a task
 
 ```
 /ask-foreign-agent run pond "Summarise how the auth module works"
 ```
-→ agent handle `pond`: auto-select runtime and model. Output prefixed `[pond]`.
+Agent handle `pond` — machine only. Runtime and model are auto-selected from the topology.
 
 ```
-/ask-foreign-agent run pond-qwen-hermes "Summarise how the auth module works"
+/ask-foreign-agent run pond-hermes "Summarise how the auth module works"
 ```
-→ agent handle `pond-qwen-hermes`: qwen model, Hermes runtime. Output prefixed `[pond-qwen-hermes]`.
+Agent handle `pond-hermes` — machine and runtime specified, model defaults to whatever Hermes is running on pond.
 
 ```
-/ask-foreign-agent run pond-qwen-goose "Refactor the retry logic and open a PR"
+/ask-foreign-agent run pond-qwen3-hermes "Summarise how the auth module works"
 ```
-→ agent handle `pond-qwen-goose`: qwen model, Goose ACP runtime.
+Agent handle `pond-qwen3-hermes` — machine, LLM family, and runtime all specified.
 
 ```
-/ask-foreign-agent run gollum-mistral-hermes "Run the test suite and report failures"
+/ask-foreign-agent run pond-qwen3-32b-hermes "Refactor the retry logic and open a PR"
 ```
-→ agent handle `gollum-mistral-hermes`: mistral model, Hermes runtime.
+Agent handle `pond-qwen3-32b-hermes` — fully qualified: machine `pond`, model `qwen3-32b`, runtime Hermes.
 
 ### Sync repo and language state
 
