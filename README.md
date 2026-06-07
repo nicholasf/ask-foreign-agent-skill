@@ -1,36 +1,36 @@
 # ask-foreign-agent-skill
 
-Delegate tasks to a remote autonomous agent runtime (Hermes, Goose ACP). The remote agent receives the task, executes it using its own local tools, and returns the result. No tool proxying — the agent is fully autonomous.
+Delegate tasks to a remote autonomous agent (Hermes, Goose ACP). The remote agent receives the task, executes it using its own local tools, and returns the result. No tool proxying — the agent is fully autonomous.
 
-Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available nodes and their gateway URLs. The topology also defines **agent handles** — the `<machine>-<llm>-<runtime>` names used to address a specific agent, e.g. `pond-qwen-hermes`, `gollum-mistral-goose`.
+Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available nodes and their gateway URLs. The topology also defines **agent handles** — the `<machine>-<llm>-<agent>` names used to address a specific agent, e.g. `pond-qwen-hermes`, `gollum-mistral-goose`.
 
 ---
 
 ## Examples
 
-Each command takes an **agent handle** — a `<machine>[-<llm>[-<runtime>]]` address that identifies exactly which agent to talk to. Start with just the machine name and add specificity as needed; unspecified parts are filled in from the topology.
+Each command takes an **agent handle** — a `<machine>[-<llm>[-<agent>]]` address that identifies exactly which agent to talk to. Start with just the machine name and add specificity as needed; unspecified parts are filled in from the topology.
 
 ### Delegate a task
 
 ```
 /ask-foreign-agent run pond "Summarise how the auth module works"
 ```
-Agent handle `pond` — machine only. Runtime and model are auto-selected from the topology.
+Agent handle `pond` — machine only. Agent and model are auto-selected from the topology.
 
 ```
 /ask-foreign-agent run pond-hermes "Summarise how the auth module works"
 ```
-Agent handle `pond-hermes` — machine and runtime specified, model defaults to whatever Hermes is running on pond.
+Agent handle `pond-hermes` — machine and agent specified, model defaults to whatever Hermes is running on pond.
 
 ```
 /ask-foreign-agent run pond-qwen3-hermes "Summarise how the auth module works"
 ```
-Agent handle `pond-qwen3-hermes` — machine, LLM family, and runtime all specified.
+Agent handle `pond-qwen3-hermes` — machine, LLM family, and agent all specified.
 
 ```
 /ask-foreign-agent run pond-qwen3-32b-hermes "Refactor the retry logic and open a PR"
 ```
-Agent handle `pond-qwen3-32b-hermes` — fully qualified: machine `pond`, model `qwen3-32b`, runtime Hermes.
+Agent handle `pond-qwen3-32b-hermes` — fully qualified: machine `pond`, model `qwen3-32b`, agent Hermes.
 
 ### Sync repo and language state
 
@@ -38,7 +38,7 @@ Agent handle `pond-qwen3-32b-hermes` — fully qualified: machine `pond`, model 
 /ask-foreign-agent sync yggd
 ```
 
-That's it for the common case. The repo is detected from the current git root; language versions are auto-detected from the project's indicator files (`pyproject.toml`, `go.mod`, `package.json`, etc.) and the local runtime versions. The remote agent locates the repo or returns what it needs to catch up.
+That's it for the common case. The repo is detected from the current git root; language versions are auto-detected from the project's indicator files (`pyproject.toml`, `go.mod`, `package.json`, etc.) and locally installed versions. The remote agent locates the repo or returns what it needs to catch up.
 
 With an explicit agent handle and repo:
 
