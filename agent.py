@@ -14,9 +14,12 @@ Bridge mode — SSH:
   python3 agent.py --cwd /path/to/project --ssh-node <hostname> --ssh-cwd <remote-path> "Your message"
 
 Peer mode (agent-to-agent):
-  The remote node runs a full agent runtime (e.g. Hermes). The orchestrating
-  agent sends a task and receives an autonomous result. No SSH proxying.
-  Implementation pending Hermes setup on target nodes.
+  The remote node runs Hermes as an agent runtime. The orchestrating agent
+  sends a task to the Hermes gateway and receives an autonomous result.
+  Requires Hermes configured with API_SERVER_ENABLED=true on the remote node.
+  Gateway URL and key are read from topology.md and $SKILLS_HOME/.env.
+
+  python3 agent.py --peer-node <hostname> "Your task"
 
 Environment:
   FOREIGN_AGENT_URL    OpenAI-compatible base URL of the remote model
@@ -39,6 +42,40 @@ from tools.bash import bash
 AGENT_URL = os.environ.get('FOREIGN_AGENT_URL', 'http://localhost:9337/v1')
 AGENT_MODEL = os.environ.get('FOREIGN_AGENT_MODEL', 'qwen3-coder-30b.gguf')
 MAX_ITERATIONS = 400
+
+
+def _load_skills_env() -> dict[str, str]:
+    skills_home = os.environ.get('SKILLS_HOME', os.path.expanduser('~/.agents/skills'))
+    result: dict[str, str] = {}
+    try:
+        with open(os.path.join(skills_home, '.env')) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, _, v = line.partition('=')
+                    result[k.strip()] = v.strip()
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def _topology_node(hostname: str) -> dict[str, str]:
+    skills_home = os.environ.get('SKILLS_HOME', os.path.expanduser('~/.agents/skills'))
+    topology_path = os.environ.get('TOPOLOGY_PATH', os.path.join(skills_home, 'topology.md'))
+    try:
+        with open(topology_path) as f:
+            rows = [l.strip() for l in f if l.strip().startswith('|')]
+    except FileNotFoundError:
+        return {}
+    if len(rows) < 3:
+        return {}
+    headers = [h.strip() for h in rows[0].strip('|').split('|')]
+    for row in rows[2:]:  # skip separator line
+        values = [v.strip() for v in row.strip('|').split('|')]
+        node = dict(zip(headers, values))
+        if node.get('hostname') == hostname:
+            return node
+    return {}
 
 _FUNC_RE = re.compile(r'(?:<tool_call>\s*)?<function=(\w+)>(.*?)</function>\s*(?:</tool_call>)?', re.DOTALL)
 _PARAM_RE = re.compile(r'<parameter=(\w+)>\s*(.*?)\s*</parameter>', re.DOTALL)
@@ -117,6 +154,34 @@ def run(message: str, prefix: str, tools: list, tool_map: dict) -> None:
     print(flush=True)
 
 
+def run_peer(message: str, peer_node: str, prefix: str) -> str:
+    node = _topology_node(peer_node)
+    gateway = node.get('hermes_gateway', '').replace('—', '').strip()
+    key_env = node.get('hermes_key_env', '').replace('—', '').strip()
+
+    if not gateway:
+        print(f'[{prefix}] error: no hermes_gateway entry for {peer_node!r} in topology.md', file=sys.stderr)
+        sys.exit(1)
+
+    api_key = _load_skills_env().get(key_env, '') if key_env else ''
+
+    llm = ChatOpenAI(
+        base_url=f'{gateway}/v1',
+        api_key=api_key or 'none',
+        model='hermes-agent',
+        temperature=0,
+    )
+
+    print(f'\n[{prefix}] peer → {gateway}\n', flush=True)
+    response = llm.invoke([HumanMessage(content=message)])
+    output = str(response.content)
+
+    for line in output.splitlines():
+        print_prefixed(line, prefix)
+    print(flush=True)
+    return output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='ask-foreign-agent: remote LLM as agent')
     parser.add_argument('message', nargs='+', help='Message to send to the agent')
@@ -124,9 +189,13 @@ def main() -> None:
     parser.add_argument('--thread', default='default', help='Thread ID for multi-turn conversation')
     parser.add_argument('--ssh-node', default='', help='Remote node hostname for bridge (SSH) mode')
     parser.add_argument('--ssh-cwd', default='', help='Working directory on the remote node for bridge (SSH) mode')
+    parser.add_argument('--peer-node', default='', help='Remote node hostname for peer mode (Hermes gateway)')
     args = parser.parse_args()
 
-    if args.ssh_node:
+    if args.peer_node:
+        run_peer(' '.join(args.message), args.peer_node, args.peer_node)
+        return
+    elif args.ssh_node:
         _context.ssh_node = args.ssh_node
         _context.working_directory = args.ssh_cwd or '.'
         prefix = args.ssh_node
