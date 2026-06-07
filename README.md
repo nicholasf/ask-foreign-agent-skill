@@ -1,8 +1,10 @@
 # ask-foreign-agent-skill
 
-Delegate tasks to a remote autonomous agent (Hermes, Goose ACP). The remote agent receives the task, executes it using its own local tools, and returns the result. No tool proxying — the agent is fully autonomous.
+Delegate tasks to a remote autonomous agent (Hermes, Goose ACP). 
 
-Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available nodes and their gateway URLs. The topology also defines **agent handles** — the `<machine>-<llm>-<agent>` names used to address a specific agent, e.g. `pond-qwen-hermes`, `gollum-mistral-goose`.
+Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available machines, llm nodes and the agents running on them. The topology also defines **agent handles** — the `<machine>-<llm>-<agent>` names used to address a specific agent, e.g. `pond-qwen-hermes`, `gollum-mistral-goose`.
+
+The remote agent receives the task, executes it using its own local tools, and returns the result. No tool proxying — the agent is fully autonomous.
 
 ---
 
