@@ -2,28 +2,31 @@
 """
 ask-foreign-agent: run a remote LLM node as an interactive agent.
 
-Bridge mode (default):
-  The remote agent uses proxied tools to access the local filesystem.
-  Tool calls execute on the orchestrating agent's machine.
+Bridge mode — local (default):
+  Tool calls execute on the orchestrating machine (dtv-claude-agent's machine).
 
   python3 agent.py --cwd /path/to/project "Your message"
 
-Peer mode (--node):
-  The remote agent clones the repo to its own machine and works against it directly.
-  Tool calls execute on the remote node via SSH. The local working copy is untouched.
+Bridge mode — SSH:
+  Tool calls execute on a remote node via SSH. The remote node needs the repo
+  and toolchain but does not need an agent runtime.
 
-  python3 agent.py --node <hostname> --repo <url> "Your message"
+  python3 agent.py --cwd /path/to/project --ssh-node <hostname> --ssh-cwd <remote-path> "Your message"
+
+Peer mode (agent-to-agent):
+  The remote node runs a full agent runtime (e.g. Hermes). The orchestrating
+  agent sends a task and receives an autonomous result. No SSH proxying.
+  Implementation pending Hermes setup on target nodes.
 
 Environment:
   FOREIGN_AGENT_URL    OpenAI-compatible base URL of the remote model
   FOREIGN_AGENT_MODEL  Model name to request
-  AGENT_SSH_USER       Username for SSH connections in peer mode (see load-topology-skill)
+  AGENT_SSH_USER       Username for SSH connections in bridge (SSH) mode
 """
 
 import argparse
 import os
 import re
-import subprocess
 import sys
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -74,21 +77,6 @@ def print_prefixed(text: str, prefix: str, suffix: str = '') -> None:
         print(f'{tag} {line}')
 
 
-def clone_or_update(node: str, repo: str, remote_path: str) -> None:
-    ssh_user = os.environ.get('AGENT_SSH_USER', '')
-    target = f'{ssh_user}@{node}' if ssh_user else node
-    command = (
-        f'[ -d {remote_path}/.git ] '
-        f'&& (cd {remote_path} && git pull) '
-        f'|| git clone {repo} {remote_path}'
-    )
-    print(f'[peer] preparing {node}:{remote_path}')
-    result = subprocess.run(['ssh', target, command], capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f'[peer] failed: {result.stderr.strip()}', file=sys.stderr)
-        sys.exit(1)
-    print(f'[peer] ready')
-
 
 def run(message: str, prefix: str, tools: list, tool_map: dict) -> None:
     llm = make_llm().bind_tools(tools)
@@ -132,23 +120,16 @@ def run(message: str, prefix: str, tools: list, tool_map: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='ask-foreign-agent: remote LLM as agent')
     parser.add_argument('message', nargs='+', help='Message to send to the agent')
-    parser.add_argument('--cwd', default='.', help='Working directory for bridge mode tool execution')
+    parser.add_argument('--cwd', default='.', help='Local working directory for bridge mode tool execution')
     parser.add_argument('--thread', default='default', help='Thread ID for multi-turn conversation')
-    parser.add_argument('--node', default='', help='Topology node hostname for peer mode')
-    parser.add_argument('--repo', default='', help='Git repo URL to clone on the remote node (peer mode)')
-    parser.add_argument('--remote-path', default='', help='Path on remote node for the repo clone (peer mode)')
+    parser.add_argument('--ssh-node', default='', help='Remote node hostname for bridge (SSH) mode')
+    parser.add_argument('--ssh-cwd', default='', help='Working directory on the remote node for bridge (SSH) mode')
     args = parser.parse_args()
 
-    if args.node:
-        if not args.repo:
-            print('Error: --repo is required in peer mode (--node)', file=sys.stderr)
-            sys.exit(1)
-        repo_name = args.repo.rstrip('/').split('/')[-1].replace('.git', '')
-        remote_path = args.remote_path or f'/tmp/ask-foreign-agent/{repo_name}'
-        clone_or_update(args.node, args.repo, remote_path)
-        _context.ssh_node = args.node
-        _context.working_directory = remote_path
-        prefix = args.node
+    if args.ssh_node:
+        _context.ssh_node = args.ssh_node
+        _context.working_directory = args.ssh_cwd or '.'
+        prefix = args.ssh_node
         active_tools = [bash]
         active_tool_map = {'bash': bash}
     else:
