@@ -100,3 +100,58 @@ def test_run_peer_exits_when_no_gateway(tmp_skills):
 def test_run_peer_exits_when_node_not_in_topology(tmp_skills):
     with pytest.raises(SystemExit):
         peer.run_peer('test task', 'nonexistent', 'nonexistent')
+
+
+# --- --runtime flag ---
+
+def test_runtime_hermes_explicit(tmp_skills):
+    (tmp_skills / '.env').write_text('BOTH_NODE_KEY=k\n')
+    mock_response = MagicMock()
+    mock_response.content = 'hermes forced'
+
+    with patch('peer.ChatOpenAI') as mock_cls:
+        mock_cls.return_value.invoke.return_value = mock_response
+        result = peer.run_peer('task', 'both-node', 'both-node', runtime='hermes')
+
+    assert result == 'hermes forced'
+    mock_cls.assert_called_once()
+
+
+def test_runtime_goose_explicit(tmp_skills):
+    with patch('goose.acp.prompt', return_value='goose forced') as mock_prompt:
+        result = peer.run_peer('task', 'both-node', 'both-node', runtime='goose')
+
+    assert result == 'goose forced'
+    mock_prompt.assert_called_once()
+
+
+def test_runtime_hermes_explicit_exits_when_not_configured(tmp_skills):
+    with pytest.raises(SystemExit):
+        peer.run_peer('task', 'goose-node', 'goose-node', runtime='hermes')
+
+
+def test_runtime_goose_explicit_exits_when_not_configured(tmp_skills):
+    with pytest.raises(SystemExit):
+        peer.run_peer('task', 'hermes-node', 'hermes-node', runtime='goose')
+
+
+# --- fallback ---
+
+def test_auto_falls_back_to_hermes_when_goose_unreachable(tmp_skills):
+    (tmp_skills / '.env').write_text('BOTH_NODE_KEY=k\n')
+    mock_response = MagicMock()
+    mock_response.content = 'hermes fallback'
+
+    with patch('goose.acp.prompt', side_effect=OSError('Connection refused')):
+        with patch('peer.ChatOpenAI') as mock_cls:
+            mock_cls.return_value.invoke.return_value = mock_response
+            result = peer.run_peer('task', 'both-node', 'both-node', runtime='auto')
+
+    assert result == 'hermes fallback'
+    mock_cls.assert_called_once()
+
+
+def test_auto_exits_when_goose_unreachable_and_no_hermes(tmp_skills):
+    with patch('goose.acp.prompt', side_effect=OSError('Connection refused')):
+        with pytest.raises(SystemExit):
+            peer.run_peer('task', 'goose-node', 'goose-node', runtime='auto')
