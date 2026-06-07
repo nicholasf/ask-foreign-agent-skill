@@ -49,11 +49,16 @@ curl -sv http://<hostname>:3284/ 2>&1 | grep "acp-connection-id"
 ```bash
 "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
   "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/peer.py" \
-  sync <node> --repo /path/to/repo [--lang python=3.11] [--lang node=20]
+  sync <node> [--repo /path/to/repo] [--lang python=3.11]
 ```
 
+`--repo` defaults to the git root of the current working directory. `--lang`
+defaults to auto-detection from indicator files (`pyproject.toml`, `go.mod`,
+`package.json`, etc.) and local runtime versions — no flags required for the
+common case.
+
 Reads the local repo's current branch and HEAD SHA1, sends them to the remote
-agent along with the requested language versions, and returns a JSON report:
+agent along with detected language versions, and returns a JSON report:
 
 ```json
 {

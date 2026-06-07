@@ -199,6 +199,50 @@ def test_auto_exits_when_goose_unreachable_and_no_hermes(tmp_skills):
             peer.run_peer('task', 'goose-node', 'goose-node', runtime='auto')
 
 
+# --- sync: _git_root ---
+
+def test_git_root_finds_root(git_repo):
+    assert peer._git_root(str(git_repo)) == str(git_repo)
+
+
+def test_git_root_finds_root_from_subdir(git_repo):
+    subdir = git_repo / 'subdir'
+    subdir.mkdir()
+    assert peer._git_root(str(subdir)) == str(git_repo)
+
+
+def test_git_root_falls_back_when_not_in_repo(tmp_path):
+    assert peer._git_root(str(tmp_path)) == str(tmp_path)
+
+
+# --- sync: _detect_langs ---
+
+def test_detect_langs_finds_python(tmp_path):
+    (tmp_path / 'pyproject.toml').write_text('[project]\nname = "x"\n')
+    langs = peer._detect_langs(str(tmp_path))
+    assert 'python' in langs
+    assert langs['python'] != ''
+
+
+def test_detect_langs_finds_node(tmp_path):
+    (tmp_path / 'package.json').write_text('{"name": "x"}')
+    langs = peer._detect_langs(str(tmp_path))
+    assert 'node' in langs
+
+
+def test_detect_langs_empty_for_unknown_project(tmp_path):
+    langs = peer._detect_langs(str(tmp_path))
+    assert langs == {}
+
+
+def test_detect_langs_multiple(tmp_path):
+    (tmp_path / 'pyproject.toml').write_text('')
+    (tmp_path / 'go.mod').write_text('module x\ngo 1.21\n')
+    langs = peer._detect_langs(str(tmp_path))
+    assert 'python' in langs
+    assert 'go' in langs
+
+
 # --- sync: _git_info ---
 
 @pytest.fixture

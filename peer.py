@@ -24,7 +24,24 @@ from langchain_openai import ChatOpenAI
 
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
 _FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.MULTILINE)
+_VER_RE = re.compile(r'(\d+\.\d+(?:\.\d+)*)')
 _RUNTIMES = frozenset({'goose', 'hermes'})
+
+_LANG_INDICATORS: dict[str, list[str]] = {
+    'python': ['pyproject.toml', 'setup.py', 'requirements.txt', 'Pipfile', '.python-version'],
+    'node':   ['package.json', '.nvmrc', '.node-version'],
+    'go':     ['go.mod'],
+    'rust':   ['Cargo.toml'],
+    'ruby':   ['Gemfile'],
+}
+
+_VERSION_CMDS: dict[str, list[str]] = {
+    'python': ['python3', '--version'],
+    'node':   ['node', '--version'],
+    'go':     ['go', 'version'],
+    'rust':   ['rustc', '--version'],
+    'ruby':   ['ruby', '--version'],
+}
 
 
 def _all_topology_hostnames() -> set[str]:
@@ -172,6 +189,42 @@ def run_peer(message: str, peer_node: str, prefix: str, runtime: str = 'auto') -
 
 # --- sync ---
 
+def _git_root(start: str) -> str:
+    """Walk up from start until a .git directory is found; return that path."""
+    path = os.path.abspath(start)
+    while True:
+        if os.path.isdir(os.path.join(path, '.git')):
+            return path
+        parent = os.path.dirname(path)
+        if parent == path:
+            return start
+        path = parent
+
+
+def _extract_version(text: str) -> str:
+    m = _VER_RE.search(text)
+    return m.group(1) if m else 'unknown'
+
+
+def _detect_langs(repo_path: str) -> dict[str, str]:
+    """Detect languages used in repo_path and return their local installed versions."""
+    langs: dict[str, str] = {}
+    for lang, indicators in _LANG_INDICATORS.items():
+        if not any(os.path.exists(os.path.join(repo_path, f)) for f in indicators):
+            continue
+        cmd = _VERSION_CMDS.get(lang, [])
+        version = 'unknown'
+        if cmd:
+            try:
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+                out = (r.stdout + r.stderr).strip().split('\n')[0]
+                version = _extract_version(out)
+            except OSError:
+                pass
+        langs[lang] = version
+    return langs
+
+
 def _git_info(repo_path: str) -> dict[str, str]:
     def git(*args) -> str:
         try:
@@ -254,9 +307,9 @@ def main() -> None:
 
     sync_p = subparsers.add_parser('sync', help='Negotiate repo state and language versions with remote agent')
     sync_p.add_argument('node', help='Remote node hostname (from topology)')
-    sync_p.add_argument('--repo', required=True, help='Local path to the git repository')
+    sync_p.add_argument('--repo', default=None, help='Local repo path (default: git root from cwd)')
     sync_p.add_argument('--lang', action='append', dest='langs', metavar='NAME=VERSION',
-                        help='Language version to check, e.g. python=3.11 (repeatable)')
+                        help='Language version to check, e.g. python=3.11 (repeatable; default: auto-detect)')
     sync_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
                         help='Force a specific runtime (default: auto)')
 
@@ -269,11 +322,14 @@ def main() -> None:
     if args.command == 'run':
         run_peer(' '.join(args.message), hostname, args.node, runtime=runtime)
     elif args.command == 'sync':
-        langs = {}
+        repo = args.repo or _git_root(os.getcwd())
+        langs: dict[str, str] = {}
         for item in (args.langs or []):
             k, _, v = item.partition('=')
             langs[k.strip()] = v.strip()
-        result = run_sync(hostname, args.repo, langs, runtime=runtime)
+        if not langs:
+            langs = _detect_langs(repo)
+        result = run_sync(hostname, repo, langs, runtime=runtime)
         print(json.dumps(result, indent=2))
 
 

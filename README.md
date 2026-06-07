@@ -2,7 +2,7 @@
 
 Delegate tasks to a remote autonomous agent runtime (Hermes, Goose ACP). The remote agent receives the task, executes it using its own local tools, and returns the result. No tool proxying — the agent is fully autonomous.
 
-Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available nodes and their gateway URLs.
+Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skill) to discover available nodes and their gateway URLs. The topology also defines **agent handles** — the `<machine>-<llm>-<runtime>` names used to address a specific agent, e.g. `pond-qwen-hermes`, `gollum-mistral-goose`.
 
 ---
 
@@ -35,11 +35,15 @@ The node argument uses the convention `<machine>[-<llm>[-<runtime>]]`. Omit the 
 ### Sync repo and language state
 
 ```
-/ask-foreign-agent sync pond --repo /home/user/code/my-project --lang python=3.11
+/ask-foreign-agent sync yggd
 ```
 
+That's it for the common case. The repo is detected from the current git root; language versions are auto-detected from the project's indicator files (`pyproject.toml`, `go.mod`, `package.json`, etc.) and the local runtime versions. The remote agent locates the repo or returns what it needs to catch up.
+
+With an explicit agent handle and repo:
+
 ```
-/ask-foreign-agent sync pond-qwen-hermes --repo /home/user/code/my-project --lang python=3.11 --lang node=20
+/ask-foreign-agent sync yggd-qwen-hermes --repo /home/user/code/my-project
 ```
 
 Returns structured JSON showing whether the remote has the local HEAD commit and whether language versions match:
@@ -51,8 +55,8 @@ Returns structured JSON showing whether the remote has the local HEAD commit and
   "remote_sha1": "4f9a2c1...",
   "git_commands": [],
   "languages": {
-    "python": {"requested": "3.11", "found": "3.12.0", "match": false},
-    "node":   {"requested": "20",   "found": "20.11.0", "match": true}
+    "python": {"requested": "3.11.0", "found": "3.12.0", "match": false},
+    "node":   {"requested": "20.11.0", "found": "20.11.0", "match": true}
   }
 }
 ```
