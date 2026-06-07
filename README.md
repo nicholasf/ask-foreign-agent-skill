@@ -65,9 +65,9 @@ If `sha1_present` is `false`, `git_commands` lists the steps to bring the remote
 
 ---
 
-## Supported runtimes
+## Supported agents
 
-| Runtime | Protocol | Topology columns | Setup |
+| Agent | Protocol | Topology columns | Setup |
 |---|---|---|---|
 | Hermes | HTTP (OpenAI-compatible) | `hermes_gateway`, `hermes_key_env` | `docs/agents/hermes.md` |
 | Goose ACP | JSON-RPC 2.0 over WebSocket | `goose_acp_url` | `docs/agents/goose.md` |

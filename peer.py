@@ -25,7 +25,7 @@ from langchain_openai import ChatOpenAI
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
 _FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.MULTILINE)
 _VER_RE = re.compile(r'(\d+\.\d+(?:\.\d+)*)')
-_RUNTIMES = frozenset({'goose', 'hermes'})
+_AGENTS = frozenset({'goose', 'hermes'})
 
 _LANG_INDICATORS: dict[str, list[str]] = {
     'python': ['pyproject.toml', 'setup.py', 'requirements.txt', 'Pipfile', '.python-version'],
@@ -66,21 +66,21 @@ def _all_topology_hostnames() -> set[str]:
 
 
 def _parse_node_spec(spec: str, known_hosts: set[str]) -> tuple[str, str | None, str | None]:
-    """Parse '<hostname>[-<llm>[-<runtime>]]' into (hostname, llm, runtime).
+    """Parse '<hostname>[-<llm>[-<agent>]]' into (hostname, llm, agent).
 
     Handles compound hostnames (e.g. 'dawntreader-v') by matching against known_hosts.
-    Runtime must be 'goose' or 'hermes' when present.
+    Agent must be 'goose' or 'hermes' when present.
     """
     parts = spec.split('-')
-    runtime: str | None = None
-    if parts[-1] in _RUNTIMES:
-        runtime = parts.pop()
+    agent: str | None = None
+    if parts[-1] in _AGENTS:
+        agent = parts.pop()
     for i in range(len(parts), 0, -1):
         candidate = '-'.join(parts[:i])
         if candidate in known_hosts:
             llm = '-'.join(parts[i:]) or None
-            return candidate, llm, runtime
-    return '-'.join(parts), None, runtime
+            return candidate, llm, agent
+    return '-'.join(parts), None, agent
 
 
 def _load_skills_env() -> dict[str, str]:
@@ -147,17 +147,17 @@ def _run_goose(message: str, node: dict, prefix: str) -> str:
     return goose.acp.prompt(acp_url, message)
 
 
-def _call_agent(message: str, node: dict, peer_node: str, runtime: str) -> str:
-    """Route to the configured agent runtime and return the raw response."""
+def _call_agent(message: str, node: dict, peer_node: str, agent: str) -> str:
+    """Route to the configured agent and return the raw response."""
     goose_url = _clean(node.get('goose_acp_url', ''))
     hermes_gateway = _clean(node.get('hermes_gateway', ''))
 
-    if runtime == 'goose':
+    if agent == 'goose':
         if not goose_url:
             print(f'[{peer_node}] error: no goose_acp_url for {peer_node!r} in topology.md', file=sys.stderr)
             sys.exit(1)
         return _run_goose(message, node, peer_node)
-    elif runtime == 'hermes':
+    elif agent == 'hermes':
         if not hermes_gateway:
             print(f'[{peer_node}] error: no hermes_gateway for {peer_node!r} in topology.md', file=sys.stderr)
             sys.exit(1)
@@ -179,9 +179,9 @@ def _call_agent(message: str, node: dict, peer_node: str, runtime: str) -> str:
         sys.exit(1)
 
 
-def run_peer(message: str, peer_node: str, prefix: str, runtime: str = 'auto') -> str:
+def run_peer(message: str, peer_node: str, prefix: str, agent: str = 'auto') -> str:
     node = _topology_node(peer_node)
-    output = _call_agent(message, node, peer_node, runtime)
+    output = _call_agent(message, node, peer_node, agent)
     print_prefixed(output, prefix)
     print(flush=True)
     return output
@@ -270,7 +270,7 @@ def _sync_prompt(repo_name: str, remote_url: str, branch: str, sha1: str, langs:
     return header + template
 
 
-def run_sync(peer_node: str, repo_path: str, langs: dict[str, str], runtime: str = 'auto') -> dict:
+def run_sync(peer_node: str, repo_path: str, langs: dict[str, str], agent: str = 'auto') -> dict:
     node = _topology_node(peer_node)
     git = _git_info(repo_path)
     repo_name = os.path.basename(repo_path.rstrip('/'))
@@ -283,7 +283,7 @@ def run_sync(peer_node: str, repo_path: str, langs: dict[str, str], runtime: str
         langs=langs,
     )
 
-    raw = _call_agent(prompt, node, peer_node, runtime)
+    raw = _call_agent(prompt, node, peer_node, agent)
     raw = _THINK_RE.sub('', raw).strip()
     raw = _FENCE_RE.sub('', raw).strip()
 
@@ -302,25 +302,25 @@ def main() -> None:
     run_p = subparsers.add_parser('run', help='Delegate a task to the remote agent')
     run_p.add_argument('node', help='Remote node hostname (from topology)')
     run_p.add_argument('message', nargs='+', help='Task to send to the remote agent')
-    run_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
-                       help='Force a specific runtime (default: auto)')
+    run_p.add_argument('--agent', default='auto', choices=['auto', 'goose', 'hermes'],
+                       help='Force a specific agent (default: auto)')
 
     sync_p = subparsers.add_parser('sync', help='Negotiate repo state and language versions with remote agent')
     sync_p.add_argument('node', help='Remote node hostname (from topology)')
     sync_p.add_argument('--repo', default=None, help='Local repo path (default: git root from cwd)')
     sync_p.add_argument('--lang', action='append', dest='langs', metavar='NAME=VERSION',
                         help='Language version to check, e.g. python=3.11 (repeatable; default: auto-detect)')
-    sync_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
-                        help='Force a specific runtime (default: auto)')
+    sync_p.add_argument('--agent', default='auto', choices=['auto', 'goose', 'hermes'],
+                        help='Force a specific agent (default: auto)')
 
     args = parser.parse_args()
 
     known_hosts = _all_topology_hostnames()
-    hostname, _llm, runtime_from_name = _parse_node_spec(args.node, known_hosts)
-    runtime = args.runtime if args.runtime != 'auto' else (runtime_from_name or 'auto')
+    hostname, _llm, agent_from_name = _parse_node_spec(args.node, known_hosts)
+    agent = args.agent if args.agent != 'auto' else (agent_from_name or 'auto')
 
     if args.command == 'run':
-        run_peer(' '.join(args.message), hostname, args.node, runtime=runtime)
+        run_peer(' '.join(args.message), hostname, args.node, agent=agent)
     elif args.command == 'sync':
         repo = args.repo or _git_root(os.getcwd())
         langs: dict[str, str] = {}
@@ -329,7 +329,7 @@ def main() -> None:
             langs[k.strip()] = v.strip()
         if not langs:
             langs = _detect_langs(repo)
-        result = run_sync(hostname, repo, langs, runtime=runtime)
+        result = run_sync(hostname, repo, langs, agent=agent)
         print(json.dumps(result, indent=2))
 
 

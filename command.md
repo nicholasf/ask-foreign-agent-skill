@@ -8,10 +8,11 @@ All output is prefixed with `[node-name]`.
 
 ## Agent naming convention
 
-Refer to agents as `<machine>-<llm>-<runtime>`, e.g. `pond-qwen-hermes`,
-`pond-qwen-goose`, `gollum-mistral-hermes`. This makes it unambiguous which
-machine, model, and runtime is acting. The node argument to both subcommands
-follows this convention — omit parts you don't need and defaults are applied.
+Refer to agents by their **agent handle** — `<machine>-<llm>-<agent>`, e.g.
+`pond-qwen-hermes`, `pond-qwen-goose`, `gollum-mistral-hermes`. This makes it
+unambiguous which machine, model, and agent is acting. The node argument to
+both subcommands follows this convention — omit parts you don't need and
+defaults are applied.
 
 ## Before invoking
 
@@ -40,9 +41,9 @@ curl -sv http://<hostname>:3284/ 2>&1 | grep "acp-connection-id"
   run <node> "<task>"
 ```
 
-`<node>` is `<machine>[-<llm>[-<runtime>]]`, e.g. `pond`, `pond-qwen-hermes`,
-`pond-qwen-goose`. The gateway URL and Bearer token are read automatically from
-`topology.md` and `$SKILLS_HOME/.env`.
+`<node>` is an agent handle — `<machine>[-<llm>[-<agent>]]`, e.g. `pond`,
+`pond-qwen-hermes`, `pond-qwen-goose`. The gateway URL and Bearer token are
+read automatically from `topology.md` and `$SKILLS_HOME/.env`.
 
 ### sync — negotiate repo and language state
 
@@ -54,8 +55,8 @@ curl -sv http://<hostname>:3284/ 2>&1 | grep "acp-connection-id"
 
 `--repo` defaults to the git root of the current working directory. `--lang`
 defaults to auto-detection from indicator files (`pyproject.toml`, `go.mod`,
-`package.json`, etc.) and local runtime versions — no flags required for the
-common case.
+`package.json`, etc.) and locally installed versions — no flags required for
+the common case.
 
 Reads the local repo's current branch and HEAD SHA1, sends them to the remote
 agent along with detected language versions, and returns a JSON report:
@@ -77,9 +78,9 @@ remote up to date. The remote agent can act on the report autonomously.
 
 ---
 
-## Supported agent runtimes
+## Supported agents
 
-| Runtime | Setup guide | topology columns |
+| Agent | Setup guide | topology columns |
 |---|---|---|
 | Hermes | `docs/agents/hermes.md` | `hermes_gateway`, `hermes_key_env` |
 | Goose | `docs/agents/goose.md` | `goose_acp_url` |
@@ -94,4 +95,4 @@ remote up to date. The remote agent can act on the report autonomously.
 
 Invoke when the user says "ask [node]", "delegate to [node]", "let [node]
 handle this", or "what does [node] think". For direct LLM interaction without
-an agent runtime, use ask-foreign-llm-skill instead.
+a raw LLM, use ask-foreign-llm-skill instead.

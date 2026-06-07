@@ -153,7 +153,7 @@ def test_runtime_hermes_explicit(tmp_skills):
 
     with patch('peer.ChatOpenAI') as mock_cls:
         mock_cls.return_value.invoke.return_value = mock_response
-        result = peer.run_peer('task', 'both-node', 'both-node', runtime='hermes')
+        result = peer.run_peer('task', 'both-node', 'both-node', agent='hermes')
 
     assert result == 'hermes forced'
     mock_cls.assert_called_once()
@@ -161,7 +161,7 @@ def test_runtime_hermes_explicit(tmp_skills):
 
 def test_runtime_goose_explicit(tmp_skills):
     with patch('goose.acp.prompt', return_value='goose forced') as mock_prompt:
-        result = peer.run_peer('task', 'both-node', 'both-node', runtime='goose')
+        result = peer.run_peer('task', 'both-node', 'both-node', agent='goose')
 
     assert result == 'goose forced'
     mock_prompt.assert_called_once()
@@ -169,12 +169,12 @@ def test_runtime_goose_explicit(tmp_skills):
 
 def test_runtime_hermes_explicit_exits_when_not_configured(tmp_skills):
     with pytest.raises(SystemExit):
-        peer.run_peer('task', 'goose-node', 'goose-node', runtime='hermes')
+        peer.run_peer('task', 'goose-node', 'goose-node', agent='hermes')
 
 
 def test_runtime_goose_explicit_exits_when_not_configured(tmp_skills):
     with pytest.raises(SystemExit):
-        peer.run_peer('task', 'hermes-node', 'hermes-node', runtime='goose')
+        peer.run_peer('task', 'hermes-node', 'hermes-node', agent='goose')
 
 
 # --- fallback ---
@@ -187,7 +187,7 @@ def test_auto_falls_back_to_hermes_when_goose_unreachable(tmp_skills):
     with patch('goose.acp.prompt', side_effect=OSError('Connection refused')):
         with patch('peer.ChatOpenAI') as mock_cls:
             mock_cls.return_value.invoke.return_value = mock_response
-            result = peer.run_peer('task', 'both-node', 'both-node', runtime='auto')
+            result = peer.run_peer('task', 'both-node', 'both-node', agent='auto')
 
     assert result == 'hermes fallback'
     mock_cls.assert_called_once()
@@ -196,7 +196,7 @@ def test_auto_falls_back_to_hermes_when_goose_unreachable(tmp_skills):
 def test_auto_exits_when_goose_unreachable_and_no_hermes(tmp_skills):
     with patch('goose.acp.prompt', side_effect=OSError('Connection refused')):
         with pytest.raises(SystemExit):
-            peer.run_peer('task', 'goose-node', 'goose-node', runtime='auto')
+            peer.run_peer('task', 'goose-node', 'goose-node', agent='auto')
 
 
 # --- sync: _git_root ---
