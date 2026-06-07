@@ -87,12 +87,33 @@ def _run_goose(message: str, node: dict, prefix: str) -> str:
     return goose.acp.prompt(acp_url, message)
 
 
-def run_peer(message: str, peer_node: str, prefix: str) -> str:
+def run_peer(message: str, peer_node: str, prefix: str, runtime: str = 'auto') -> str:
     node = _topology_node(peer_node)
 
-    if _clean(node.get('goose_acp_url', '')):
+    goose_url = _clean(node.get('goose_acp_url', ''))
+    hermes_gateway = _clean(node.get('hermes_gateway', ''))
+
+    if runtime == 'goose':
+        if not goose_url:
+            print(f'[{prefix}] error: no goose_acp_url for {peer_node!r} in topology.md', file=sys.stderr)
+            sys.exit(1)
         output = _run_goose(message, node, prefix)
-    elif _clean(node.get('hermes_gateway', '')):
+    elif runtime == 'hermes':
+        if not hermes_gateway:
+            print(f'[{prefix}] error: no hermes_gateway for {peer_node!r} in topology.md', file=sys.stderr)
+            sys.exit(1)
+        output = _run_hermes(message, node, prefix)
+    elif goose_url:
+        try:
+            output = _run_goose(message, node, prefix)
+        except OSError as e:
+            if hermes_gateway:
+                print(f'[{prefix}] goose unreachable ({e}), falling back to hermes\n', flush=True)
+                output = _run_hermes(message, node, prefix)
+            else:
+                print(f'[{prefix}] error: goose unreachable and no hermes fallback: {e}', file=sys.stderr)
+                sys.exit(1)
+    elif hermes_gateway:
         output = _run_hermes(message, node, prefix)
     else:
         print(f'[{prefix}] error: no agent gateway configured for {peer_node!r} in topology.md', file=sys.stderr)
@@ -107,9 +128,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description='ask-foreign-agent: delegate to a remote agent runtime')
     parser.add_argument('message', nargs='+', help='Task to send to the remote agent')
     parser.add_argument('--peer-node', required=True, help='Remote node hostname (must have Hermes or Goose running)')
+    parser.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
+                        help='Force a specific runtime (default: auto, prefers goose with hermes fallback)')
     args = parser.parse_args()
 
-    run_peer(' '.join(args.message), args.peer_node, args.peer_node)
+    run_peer(' '.join(args.message), args.peer_node, args.peer_node, runtime=args.runtime)
 
 
 if __name__ == '__main__':
