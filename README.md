@@ -8,32 +8,38 @@ Depends on [load-topology-skill](https://github.com/nicholasf/load-topology-skil
 
 ## Examples
 
-Agents are named `<machine>-<llm>-<runtime>` — e.g. `pond-qwen-goose`, `pond-qwen-hermes`, `gollum-mistral-hermes`. This comes from the topology (see [load-topology-skill](https://github.com/nicholasf/load-topology-skill)).
+The node argument uses the convention `<machine>[-<llm>[-<runtime>]]`. Omit the parts you don't need — sensible defaults are applied from the topology. Agents are referred to as `pond-qwen-goose`, `pond-qwen-hermes`, `gollum-mistral-hermes`, etc.
 
-### Delegate a task — type in your prompt
-
-```
-/ask-foreign-agent run --peer-node pond "Summarise how the auth module works"
-```
+### Delegate a task
 
 ```
-/ask-foreign-agent run --peer-node gollum --runtime hermes "Run the test suite and report failures"
+/ask-foreign-agent run pond "Summarise how the auth module works"
+```
+→ use `pond`, auto-select runtime and model. Output prefixed `[pond]`.
+
+```
+/ask-foreign-agent run pond-qwen-hermes "Summarise how the auth module works"
+```
+→ `pond`, qwen model, Hermes runtime. Output prefixed `[pond-qwen-hermes]`.
+
+```
+/ask-foreign-agent run pond-qwen-goose "Refactor the retry logic and open a PR"
+```
+→ `pond`, qwen model, Goose ACP runtime.
+
+```
+/ask-foreign-agent run gollum-mistral-hermes "Run the test suite and report failures"
+```
+→ `gollum`, mistral model, Hermes runtime.
+
+### Sync repo and language state
+
+```
+/ask-foreign-agent sync pond --repo /home/user/code/my-project --lang python=3.11
 ```
 
 ```
-/ask-foreign-agent run --peer-node pond --runtime goose "Refactor the retry logic and open a PR"
-```
-
-Output arrives prefixed with the node name:
-
-```
-[pond] The auth module uses JWT tokens issued at login...
-```
-
-### Sync repo and language state — type in your prompt
-
-```
-/ask-foreign-agent sync --peer-node pond --repo /home/user/code/my-project --lang python=3.11 --lang node=20
+/ask-foreign-agent sync pond-qwen-hermes --repo /home/user/code/my-project --lang python=3.11 --lang node=20
 ```
 
 Returns structured JSON showing whether the remote has the local HEAD commit and whether language versions match:
@@ -52,10 +58,6 @@ Returns structured JSON showing whether the remote has the local HEAD commit and
 ```
 
 If `sha1_present` is `false`, `git_commands` lists the steps to bring the remote up to date. The remote agent can act on the report autonomously.
-
-### Runtime selection
-
-The `--runtime` flag accepts `auto` (default), `goose`, or `hermes`. `auto` prefers Goose ACP if `goose_acp_url` is set in the topology, and falls back to Hermes on connection failure.
 
 ---
 

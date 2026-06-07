@@ -24,6 +24,46 @@ from langchain_openai import ChatOpenAI
 
 _THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
 _FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.MULTILINE)
+_RUNTIMES = frozenset({'goose', 'hermes'})
+
+
+def _all_topology_hostnames() -> set[str]:
+    skills_home = os.environ.get('SKILLS_HOME', os.path.expanduser('~/.agents/skills'))
+    topology_path = os.environ.get('TOPOLOGY_PATH', os.path.join(skills_home, 'topology.md'))
+    try:
+        with open(topology_path) as f:
+            rows = [l.strip() for l in f if l.strip().startswith('|')]
+    except FileNotFoundError:
+        return set()
+    if len(rows) < 3:
+        return set()
+    headers = [h.strip() for h in rows[0].strip('|').split('|')]
+    hosts: set[str] = set()
+    for row in rows[2:]:
+        values = [v.strip() for v in row.strip('|').split('|')]
+        node = dict(zip(headers, values))
+        h = _clean(node.get('hostname', ''))
+        if h and h != '—':
+            hosts.add(h)
+    return hosts
+
+
+def _parse_node_spec(spec: str, known_hosts: set[str]) -> tuple[str, str | None, str | None]:
+    """Parse '<hostname>[-<llm>[-<runtime>]]' into (hostname, llm, runtime).
+
+    Handles compound hostnames (e.g. 'dawntreader-v') by matching against known_hosts.
+    Runtime must be 'goose' or 'hermes' when present.
+    """
+    parts = spec.split('-')
+    runtime: str | None = None
+    if parts[-1] in _RUNTIMES:
+        runtime = parts.pop()
+    for i in range(len(parts), 0, -1):
+        candidate = '-'.join(parts[:i])
+        if candidate in known_hosts:
+            llm = '-'.join(parts[i:]) or None
+            return candidate, llm, runtime
+    return '-'.join(parts), None, runtime
 
 
 def _load_skills_env() -> dict[str, str]:
@@ -207,13 +247,13 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     run_p = subparsers.add_parser('run', help='Delegate a task to the remote agent')
+    run_p.add_argument('node', help='Remote node hostname (from topology)')
     run_p.add_argument('message', nargs='+', help='Task to send to the remote agent')
-    run_p.add_argument('--peer-node', required=True, help='Remote node hostname')
     run_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
                        help='Force a specific runtime (default: auto)')
 
     sync_p = subparsers.add_parser('sync', help='Negotiate repo state and language versions with remote agent')
-    sync_p.add_argument('--peer-node', required=True, help='Remote node hostname')
+    sync_p.add_argument('node', help='Remote node hostname (from topology)')
     sync_p.add_argument('--repo', required=True, help='Local path to the git repository')
     sync_p.add_argument('--lang', action='append', dest='langs', metavar='NAME=VERSION',
                         help='Language version to check, e.g. python=3.11 (repeatable)')
@@ -222,14 +262,18 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    known_hosts = _all_topology_hostnames()
+    hostname, _llm, runtime_from_name = _parse_node_spec(args.node, known_hosts)
+    runtime = args.runtime if args.runtime != 'auto' else (runtime_from_name or 'auto')
+
     if args.command == 'run':
-        run_peer(' '.join(args.message), args.peer_node, args.peer_node, runtime=args.runtime)
+        run_peer(' '.join(args.message), hostname, args.node, runtime=runtime)
     elif args.command == 'sync':
         langs = {}
         for item in (args.langs or []):
             k, _, v = item.partition('=')
             langs[k.strip()] = v.strip()
-        result = run_sync(args.peer_node, args.repo, langs, runtime=args.runtime)
+        result = run_sync(hostname, args.repo, langs, runtime=runtime)
         print(json.dumps(result, indent=2))
 
 

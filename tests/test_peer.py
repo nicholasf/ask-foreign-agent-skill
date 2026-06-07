@@ -26,6 +26,45 @@ def tmp_skills(tmp_path, monkeypatch):
     return tmp_path
 
 
+# --- _parse_node_spec ---
+
+HOSTS = {'pond', 'gollum', 'hut', 'dawntreader-v'}
+
+
+def test_parse_hostname_only():
+    assert peer._parse_node_spec('pond', HOSTS) == ('pond', None, None)
+
+
+def test_parse_hostname_and_runtime():
+    assert peer._parse_node_spec('pond-hermes', HOSTS) == ('pond', None, 'hermes')
+    assert peer._parse_node_spec('pond-goose', HOSTS) == ('pond', None, 'goose')
+
+
+def test_parse_hostname_llm_runtime():
+    assert peer._parse_node_spec('pond-qwen-hermes', HOSTS) == ('pond', 'qwen', 'hermes')
+    assert peer._parse_node_spec('gollum-mistral-goose', HOSTS) == ('gollum', 'mistral', 'goose')
+
+
+def test_parse_compound_hostname():
+    assert peer._parse_node_spec('dawntreader-v', HOSTS) == ('dawntreader-v', None, None)
+    assert peer._parse_node_spec('dawntreader-v-qwen-hermes', HOSTS) == ('dawntreader-v', 'qwen', 'hermes')
+
+
+def test_parse_unknown_host_falls_back():
+    hostname, llm, runtime = peer._parse_node_spec('unknown-node', set())
+    assert hostname == 'unknown-node'
+    assert runtime is None
+
+
+# --- _all_topology_hostnames ---
+
+def test_all_topology_hostnames(tmp_skills):
+    hosts = peer._all_topology_hostnames()
+    assert 'hermes-node' in hosts
+    assert 'goose-node' in hosts
+    assert 'both-node' in hosts
+
+
 # --- _load_skills_env ---
 
 def test_load_skills_env_reads_key_value_pairs(tmp_skills):

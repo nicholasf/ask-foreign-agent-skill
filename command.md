@@ -8,8 +8,10 @@ All output is prefixed with `[node-name]`.
 
 ## Agent naming convention
 
-Refer to agents as `<machine>-<llm>-agent`, e.g. `dtv-claude-agent`,
-`pond-qwen-agent`. This makes it clear which machine and model is acting.
+Refer to agents as `<machine>-<llm>-<runtime>`, e.g. `pond-qwen-hermes`,
+`pond-qwen-goose`, `gollum-mistral-hermes`. This makes it unambiguous which
+machine, model, and runtime is acting. The node argument to both subcommands
+follows this convention — omit parts you don't need and defaults are applied.
 
 ## Before invoking
 
@@ -35,19 +37,19 @@ curl -sv http://<hostname>:3284/ 2>&1 | grep "acp-connection-id"
 ```bash
 "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
   "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/peer.py" \
-  run --peer-node <hostname> [--runtime auto|goose|hermes] "<task>"
+  run <node> "<task>"
 ```
 
-The gateway URL and Bearer token are read automatically from `topology.md`
-and `$SKILLS_HOME/.env`.
+`<node>` is `<machine>[-<llm>[-<runtime>]]`, e.g. `pond`, `pond-qwen-hermes`,
+`pond-qwen-goose`. The gateway URL and Bearer token are read automatically from
+`topology.md` and `$SKILLS_HOME/.env`.
 
 ### sync — negotiate repo and language state
 
 ```bash
 "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/.venv/bin/python3" \
   "${SKILLS_HOME:-$HOME/.agents/skills}/ask-foreign-agent-skill/peer.py" \
-  sync --peer-node <hostname> --repo /path/to/repo \
-       [--lang python=3.11] [--lang node=20] [--runtime auto|goose|hermes]
+  sync <node> --repo /path/to/repo [--lang python=3.11] [--lang node=20]
 ```
 
 Reads the local repo's current branch and HEAD SHA1, sends them to the remote
