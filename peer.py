@@ -2,12 +2,9 @@
 """
 ask-foreign-agent: delegate tasks to a remote autonomous agent runtime.
 
-Peer mode:
-  The remote node runs an agent runtime (Hermes or Goose). The orchestrating
-  agent sends a task and receives an autonomous result. The runtime is selected
-  automatically based on which gateway is configured in topology.md.
-
-  python3 peer.py --peer-node <hostname> "Your task"
+Subcommands:
+  run   Delegate a task to the remote agent.
+  sync  Negotiate repo state and language versions with the remote agent.
 
 Environment:
   SKILLS_HOME    Root directory for skills and topology (default: ~/.agents/skills)
@@ -15,12 +12,18 @@ Environment:
 """
 
 import argparse
+import json
 import os
+import re
+import subprocess
 import sys
 
 import goose.acp
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
+
+_THINK_RE = re.compile(r'<think>.*?</think>', re.DOTALL)
+_FENCE_RE = re.compile(r'^```(?:json)?\s*|\s*```$', re.MULTILINE)
 
 
 def _load_skills_env() -> dict[str, str]:
@@ -87,52 +90,147 @@ def _run_goose(message: str, node: dict, prefix: str) -> str:
     return goose.acp.prompt(acp_url, message)
 
 
-def run_peer(message: str, peer_node: str, prefix: str, runtime: str = 'auto') -> str:
-    node = _topology_node(peer_node)
-
+def _call_agent(message: str, node: dict, peer_node: str, runtime: str) -> str:
+    """Route to the configured agent runtime and return the raw response."""
     goose_url = _clean(node.get('goose_acp_url', ''))
     hermes_gateway = _clean(node.get('hermes_gateway', ''))
 
     if runtime == 'goose':
         if not goose_url:
-            print(f'[{prefix}] error: no goose_acp_url for {peer_node!r} in topology.md', file=sys.stderr)
+            print(f'[{peer_node}] error: no goose_acp_url for {peer_node!r} in topology.md', file=sys.stderr)
             sys.exit(1)
-        output = _run_goose(message, node, prefix)
+        return _run_goose(message, node, peer_node)
     elif runtime == 'hermes':
         if not hermes_gateway:
-            print(f'[{prefix}] error: no hermes_gateway for {peer_node!r} in topology.md', file=sys.stderr)
+            print(f'[{peer_node}] error: no hermes_gateway for {peer_node!r} in topology.md', file=sys.stderr)
             sys.exit(1)
-        output = _run_hermes(message, node, prefix)
+        return _run_hermes(message, node, peer_node)
     elif goose_url:
         try:
-            output = _run_goose(message, node, prefix)
+            return _run_goose(message, node, peer_node)
         except OSError as e:
             if hermes_gateway:
-                print(f'[{prefix}] goose unreachable ({e}), falling back to hermes\n', flush=True)
-                output = _run_hermes(message, node, prefix)
+                print(f'[{peer_node}] goose unreachable ({e}), falling back to hermes\n', flush=True)
+                return _run_hermes(message, node, peer_node)
             else:
-                print(f'[{prefix}] error: goose unreachable and no hermes fallback: {e}', file=sys.stderr)
+                print(f'[{peer_node}] error: goose unreachable and no hermes fallback: {e}', file=sys.stderr)
                 sys.exit(1)
     elif hermes_gateway:
-        output = _run_hermes(message, node, prefix)
+        return _run_hermes(message, node, peer_node)
     else:
-        print(f'[{prefix}] error: no agent gateway configured for {peer_node!r} in topology.md', file=sys.stderr)
+        print(f'[{peer_node}] error: no agent gateway configured for {peer_node!r} in topology.md', file=sys.stderr)
         sys.exit(1)
 
+
+def run_peer(message: str, peer_node: str, prefix: str, runtime: str = 'auto') -> str:
+    node = _topology_node(peer_node)
+    output = _call_agent(message, node, peer_node, runtime)
     print_prefixed(output, prefix)
     print(flush=True)
     return output
 
 
+# --- sync ---
+
+def _git_info(repo_path: str) -> dict[str, str]:
+    def git(*args) -> str:
+        try:
+            r = subprocess.run(['git', *args], cwd=repo_path, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else ''
+        except OSError:
+            return ''
+
+    return {
+        'sha1': git('rev-parse', 'HEAD'),
+        'branch': git('branch', '--show-current'),
+        'remote_url': git('remote', 'get-url', 'origin'),
+    }
+
+
+def _sync_prompt(repo_name: str, remote_url: str, branch: str, sha1: str, langs: dict[str, str]) -> str:
+    header = (
+        f'Sync check. Respond with a JSON object only — no explanation, no markdown fences.\n\n'
+        f'Local agent state:\n'
+        f'  repo: {repo_name}\n'
+        f'  remote_url: {remote_url}\n'
+        f'  branch: {branch}\n'
+        f'  sha1: {sha1}\n'
+        f'  languages: {json.dumps(langs)}\n\n'
+        f'Tasks:\n'
+        f'1. Locate the repository on this machine (search ~/, ~/code/, /home/*/code/, /tmp/).\n'
+        f'2. Check if commit {sha1} is present: git cat-file -e {sha1}^{{commit}}\n'
+        f'3. If the commit is not present, provide the git commands needed to fetch and check out branch {branch!r}.\n'
+        f'4. For each language in the languages list, check the installed version.\n\n'
+        f'Respond with exactly this JSON structure:\n'
+    )
+    template = (
+        '{\n'
+        '  "repo_path": "<absolute path or null>",\n'
+        '  "sha1_present": true or false,\n'
+        '  "remote_sha1": "<current HEAD sha1 at repo_path, or null>",\n'
+        '  "git_commands": ["<cmd>", ...],\n'
+        '  "languages": {\n'
+        '    "<name>": {"requested": "<version>", "found": "<version or null>", "match": true or false}\n'
+        '  }\n'
+        '}'
+    )
+    return header + template
+
+
+def run_sync(peer_node: str, repo_path: str, langs: dict[str, str], runtime: str = 'auto') -> dict:
+    node = _topology_node(peer_node)
+    git = _git_info(repo_path)
+    repo_name = os.path.basename(repo_path.rstrip('/'))
+
+    prompt = _sync_prompt(
+        repo_name=repo_name,
+        remote_url=git.get('remote_url', ''),
+        branch=git.get('branch', ''),
+        sha1=git.get('sha1', ''),
+        langs=langs,
+    )
+
+    raw = _call_agent(prompt, node, peer_node, runtime)
+    raw = _THINK_RE.sub('', raw).strip()
+    raw = _FENCE_RE.sub('', raw).strip()
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {'error': 'could not parse agent response as JSON', 'raw': raw}
+
+
+# --- CLI ---
+
 def main() -> None:
     parser = argparse.ArgumentParser(description='ask-foreign-agent: delegate to a remote agent runtime')
-    parser.add_argument('message', nargs='+', help='Task to send to the remote agent')
-    parser.add_argument('--peer-node', required=True, help='Remote node hostname (must have Hermes or Goose running)')
-    parser.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
-                        help='Force a specific runtime (default: auto, prefers goose with hermes fallback)')
+    subparsers = parser.add_subparsers(dest='command', required=True)
+
+    run_p = subparsers.add_parser('run', help='Delegate a task to the remote agent')
+    run_p.add_argument('message', nargs='+', help='Task to send to the remote agent')
+    run_p.add_argument('--peer-node', required=True, help='Remote node hostname')
+    run_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
+                       help='Force a specific runtime (default: auto)')
+
+    sync_p = subparsers.add_parser('sync', help='Negotiate repo state and language versions with remote agent')
+    sync_p.add_argument('--peer-node', required=True, help='Remote node hostname')
+    sync_p.add_argument('--repo', required=True, help='Local path to the git repository')
+    sync_p.add_argument('--lang', action='append', dest='langs', metavar='NAME=VERSION',
+                        help='Language version to check, e.g. python=3.11 (repeatable)')
+    sync_p.add_argument('--runtime', default='auto', choices=['auto', 'goose', 'hermes'],
+                        help='Force a specific runtime (default: auto)')
+
     args = parser.parse_args()
 
-    run_peer(' '.join(args.message), args.peer_node, args.peer_node, runtime=args.runtime)
+    if args.command == 'run':
+        run_peer(' '.join(args.message), args.peer_node, args.peer_node, runtime=args.runtime)
+    elif args.command == 'sync':
+        langs = {}
+        for item in (args.langs or []):
+            k, _, v = item.partition('=')
+            langs[k.strip()] = v.strip()
+        result = run_sync(args.peer_node, args.repo, langs, runtime=args.runtime)
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == '__main__':

@@ -1,3 +1,6 @@
+import json
+import subprocess
+
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -155,3 +158,91 @@ def test_auto_exits_when_goose_unreachable_and_no_hermes(tmp_skills):
     with patch('goose.acp.prompt', side_effect=OSError('Connection refused')):
         with pytest.raises(SystemExit):
             peer.run_peer('task', 'goose-node', 'goose-node', runtime='auto')
+
+
+# --- sync: _git_info ---
+
+@pytest.fixture
+def git_repo(tmp_path):
+    subprocess.run(['git', 'init'], cwd=tmp_path, capture_output=True)
+    subprocess.run(['git', 'config', 'user.email', 'test@test.com'], cwd=tmp_path, capture_output=True)
+    subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmp_path, capture_output=True)
+    subprocess.run(['git', 'remote', 'add', 'origin', 'https://github.com/test/repo.git'], cwd=tmp_path, capture_output=True)
+    (tmp_path / 'README.md').write_text('hello')
+    subprocess.run(['git', 'add', '.'], cwd=tmp_path, capture_output=True)
+    subprocess.run(['git', '-c', 'commit.gpgsign=false', 'commit', '-m', 'init'], cwd=tmp_path, capture_output=True)
+    return tmp_path
+
+
+def test_git_info_returns_sha1_branch_remote(git_repo):
+    info = peer._git_info(str(git_repo))
+    assert len(info['sha1']) == 40
+    assert info['branch'] in ('main', 'master')
+    assert info['remote_url'] == 'https://github.com/test/repo.git'
+
+
+def test_git_info_empty_on_bad_path():
+    info = peer._git_info('/nonexistent/path')
+    assert info['sha1'] == ''
+    assert info['branch'] == ''
+
+
+# --- sync: _sync_prompt ---
+
+def test_sync_prompt_contains_key_fields():
+    prompt = peer._sync_prompt('my-repo', 'https://github.com/x/my-repo', 'main', 'abc123def', {'python': '3.11'})
+    assert 'abc123def' in prompt
+    assert 'main' in prompt
+    assert '"python": "3.11"' in prompt
+    assert 'repo_path' in prompt
+    assert 'sha1_present' in prompt
+    assert 'git_commands' in prompt
+    assert 'languages' in prompt
+
+
+# --- sync: run_sync ---
+
+SYNC_RESPONSE = json.dumps({
+    'repo_path': '/home/x/repo',
+    'sha1_present': True,
+    'remote_sha1': 'abc123def',
+    'git_commands': [],
+    'languages': {
+        'python': {'requested': '3.11', 'found': '3.12.0', 'match': False}
+    },
+})
+
+
+def test_run_sync_returns_parsed_json(tmp_skills, git_repo):
+    with patch('goose.acp.prompt', return_value=SYNC_RESPONSE):
+        result = peer.run_sync('goose-node', str(git_repo), {'python': '3.11'})
+
+    assert result['sha1_present'] is True
+    assert result['languages']['python']['match'] is False
+    assert result['repo_path'] == '/home/x/repo'
+
+
+def test_run_sync_strips_think_blocks(tmp_skills, git_repo):
+    wrapped = f'<think>internal reasoning</think>{SYNC_RESPONSE}'
+    with patch('goose.acp.prompt', return_value=wrapped):
+        result = peer.run_sync('goose-node', str(git_repo), {})
+
+    assert 'error' not in result
+    assert 'sha1_present' in result
+
+
+def test_run_sync_strips_markdown_fences(tmp_skills, git_repo):
+    wrapped = f'```json\n{SYNC_RESPONSE}\n```'
+    with patch('goose.acp.prompt', return_value=wrapped):
+        result = peer.run_sync('goose-node', str(git_repo), {})
+
+    assert 'error' not in result
+    assert 'sha1_present' in result
+
+
+def test_run_sync_returns_error_on_invalid_json(tmp_skills, git_repo):
+    with patch('goose.acp.prompt', return_value='not valid json at all'):
+        result = peer.run_sync('goose-node', str(git_repo), {})
+
+    assert 'error' in result
+    assert 'raw' in result
