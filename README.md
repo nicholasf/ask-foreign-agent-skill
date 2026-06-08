@@ -78,7 +78,7 @@ local-claude-agent
                                         │
                                    [reads files]
                                    [runs bash]
-                                   [opens PRs]
+                                   [generates diffs or opens PRs]
                                         │
                                    own tools, own machine
                                         │
