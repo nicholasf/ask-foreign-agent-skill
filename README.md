@@ -67,6 +67,28 @@ If `sha1_present` is `false`, `git_commands` lists the steps to bring the remote
 
 ---
 
+## How it works
+
+The local agent delegates a task to a remote agent handle and waits for the result. The remote agent executes autonomously — no tool calls are proxied back.
+
+```
+local-claude-agent
+  │
+  └─ delegates ─────────────────► pond-qwen-hermes
+                                        │
+                                   [reads files]
+                                   [runs bash]
+                                   [opens PRs]
+                                        │
+                                   own tools, own machine
+                                        │
+  [pond-qwen-hermes] response ◄─────────┘
+```
+
+Compare with [ask-remote-llm](https://github.com/nicholasf/ask-remote-llm-skill), where the remote LLM calls tools that execute on the local machine. Here the remote agent is fully autonomous.
+
+---
+
 ## Supported agents
 
 | Agent | Protocol | Topology columns | Setup |
